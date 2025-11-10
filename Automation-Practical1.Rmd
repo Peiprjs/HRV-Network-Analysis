@@ -1,0 +1,1026 @@
+---
+title: "INT3007 Practical 1 - Network biology"
+author: "Martina Summer-Kutmon (mkutmon)"
+date: "October 2025"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+## Learning Objectives
+
+By the end of this practical, you will be able to:
+
+-   Load and explore transcriptomics data (differential gene expression)
+-   Identify differentially expressed genes using statistical cutoffs
+-   Build and analyze protein-protein interaction (PPI) networks
+-   Calculate and interpret network topology metrics (degree, betweenness, clustering coefficient)
+-   Perform pathway enrichment analysis to identify biological processes
+-   Identify functional modules using network clustering
+-   Visualize omics data on biological pathways and networks
+-   Apply these methods to your own research datasets
+
+------------------------------------------------------------------------
+
+## 1. Installing and Loading Necessary Packages
+
+This section checks if each required package is already installed. If not, it installs the package from Bioconductor, a repository for bioinformatics tools. Each package serves a unique purpose in the analysis:
+
+-   **RCy3**: Integrates R with Cytoscape, a tool for network visualization.
+-   **readxl**: Reads Excel files into R.
+-   **RColorBrewer**: Provides color schemes, useful for visualization.
+-   **clusterProfiler**: Performs pathway enrichment analysis.
+-   **rWikiPathways**: Accesses WikiPathways for pathway information.
+-   **org.Hs.eg.db**: A human gene annotation package.
+-   **readr**: Reads and writes data efficiently.
+-   **EnhancedVolcano**: Creates volcano plots for visualizing differentially expressed genes.
+-   **rstudioapi**: Allows setting working directory to script location.
+
+```{r}
+# Install packages only if not already installed
+if (!requireNamespace("BiocManager", quietly = TRUE)) {
+  install.packages("BiocManager")
+}
+
+# Conditional installation of each package
+# The code below checks each package and installs if missing
+for (pkg in c("RCy3", "readxl", "RColorBrewer", "clusterProfiler", 
+              "rWikiPathways", "org.Hs.eg.db", "readr", "EnhancedVolcano", "rstudioapi")) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    BiocManager::install(pkg, update=FALSE)
+  }
+}
+
+library(RCy3)
+library(readxl)
+library(RColorBrewer)
+library(clusterProfiler)
+library(rWikiPathways)
+library(org.Hs.eg.db)
+library(readr)
+library(EnhancedVolcano)
+
+```
+
+------------------------------------------------------------------------
+
+## 2. Setting the Working Directory to the Source File Location
+
+This section sets the working directory to the location of this RMarkdown file. This makes sure that all files read or written are in the same location as the RMarkdown file, simplifying file management.
+
+```{r}
+# Set the working directory to the location of the source file
+setwd(dirname(rstudioapi::getActiveDocumentContext()$path))
+
+# We will create an output folder where all figures and files will be stored
+out.folder <- "output/"
+if(!dir.exists(out.folder)) {
+  dir.create(out.folder)
+}
+```
+
+------------------------------------------------------------------------
+
+## 3. Loading the Lung Cancer Dataset
+
+In this section, we load a gene expression lung cancer dataset from the TCGA project (The Cancer Genome Atlas). This dataset contains the differential gene expression result comparing lung cancer vs. healthy tissue. The dataset is loaded from an Excel file with 5 columns. This dataset will be used throughout the practical.
+
+```{r}
+# Load the lung cancer dataset from an Excel file
+# No need to define the whole file path if you set the working directory
+data <- read_excel("HRV-data.xlsx")
+
+# Check for missing values
+cat("Missing values in log2FC:", sum(is.na(data$log2FC)), "\n")
+cat("Missing values in P.Value:", sum(is.na(data$P.Value)), "\n")
+
+# Check data range
+cat("\nData summary:\n")
+print(summary(data[, c("log2FC", "P.Value", "adj.P.Value")]))
+
+# Check the number of rows (genes) in the dataset and preview the data
+cat("\nTotal number of genes:", nrow(data), "\n\n")
+head(data)
+```
+
+**Questions**
+
+-   **Q1**: How many genes are measured in the dataset?
+    -   36841
+-   **Q2**: What do the different columns mean?
+    -   What does log2FC represent? Why use log2 instead of regular fold change?
+        -   log2FC offers a more standardised measure of change, as it sets everything in terms of times change, instead of absolute change.
+    -   What is the difference between P.Value and P.value? Why do we need both?
+        -   Adj P Value is the adjusted P value. This accounts for tests, which will reduce the effects of having a large N.
+
+**Hint for Q2**: log2 fold change makes it easier to interpret: log2FC of 1 = 2x increase, log2FC of -1 = 2x decrease. The P.value corrects for multiple testing (we test thousands of genes simultaneously).
+
+------------------------------------------------------------------------
+
+## 4. Differentially Expressed Genes
+
+**Why identify DEGs?** When comparing cancer vs. healthy tissue, not all gene expression changes are meaningful. We need to find genes that show both large changes (high fold change) and statistical significance (low p-value). These differentially expressed genes (DEGs) are likely involved in cancer biology.
+
+**Multiple Testing Correction**: When testing thousands of genes, we expect some significant p-values by chance (false positives). The adjusted p-value (P.value) corrects for this using the FDR (False Discovery Rate) method, controlling the expected proportion of false positives among significant results.
+
+We filter for genes that show significant differences in expression between cancer and healthy tissues, focusing on genes with a high log-fold change and low p-value. DEGs may indicate genes relevant to cancer progression.
+
+```{r}
+# Let's see how many genes are differentially expressed in our dataset
+# For this cancer dataset, we use very strict criteria because there are thousands 
+# of differentially expressed genes. We use:
+# - P.value < 0.05 (corrected for multiple testing)
+# - |log2FC| > 1 (at least 2-fold change)
+#
+# For your projects with fewer DEGs, you may need to relax these cutoffs:
+# - Use P.Value < 0.05 (unadjusted) if few genes pass P.value cutoff
+# - Lower log2FC cutoff: 0.26 (20% change), 0.58 (50% change), 1 (100% change)
+
+log2fc.cutoff <- 0.58
+pvalue.cutoff <- 0.05
+
+# Select DEGs using absolute value to get both up and down regulated genes
+degs <- data[abs(data$log2FC) > log2fc.cutoff & data$P.Value < pvalue.cutoff, ]
+
+cat("Number of differentially expressed genes:", nrow(degs), "\n")
+
+# let's write out the table with all differentially expressed genes
+write.table(
+  degs,
+  file = paste0(out.folder, "degs.tsv"),
+  row.names = FALSE,
+  sep = "\t",
+  quote = FALSE
+)
+P.value <- data$P.Value
+```
+
+**Questions**
+
+-   **Q3**: How many genes are differentially expressed in the dataset?
+
+------------------------------------------------------------------------
+
+## EXERCISE 1: Separating Up- and Down-regulated Genes
+
+Now it's your turn! Based on the code above that selected all DEGs, you need to create two separate gene lists: one for up-regulated genes and one for down-regulated genes.
+
+**Hints:** - For up-regulated genes: `log2FC > log2fc.cutoff` (no absolute value!) - For down-regulated genes: `log2FC < -log2fc.cutoff` (note the minus sign!) - Remember to also include the `P.value < pvalue.cutoff` condition
+
+```{r}
+genes.up <- degs[degs$log2FC > log2fc.cutoff, ]
+genes.up[order(-genes.up$log2FC), ][1:5, ]
+
+genes.down <- degs[degs$log2FC < -log2fc.cutoff, ]
+genes.down[order(genes.down$log2FC), ][1:5, ]
+
+# Verify the numbers - uncomment these lines after completing the code above
+cat("Up-regulated genes:", nrow(genes.up), "\n")
+cat("Down-regulated genes:", nrow(genes.down), "\n")
+cat("Total DEGs:", nrow(genes.up) + nrow(genes.down), "\n")
+```
+
+**Questions**
+
+-   **Q4**: What are the most up- or down-regulated genes in the dataset?
+    -   Upregulated: DPYSL5, HOXB9, MAGEC2, C11orf86, DLL3
+    -   Downregulated: SLC6A4, CYP1A2, CD300LG, ITLN2, ANKRD1
+        -   Hint: Use `genes.up[order(-genes.up$log2FC), ][1:5, ]` to see top 5 up-regulated
+        -   Hint: Use `genes.down[order(genes.down$log2FC), ][1:5, ]` to see top 5 down-regulated
+-   **Checkpoint**: You should have **383 up-regulated** and **641 down-regulated** genes. Please verify before continuing!
+
+------------------------------------------------------------------------
+
+## 5. Volcano Plot Visualization
+
+```{r}
+# We can generate a Volcano plot to show the differential gene expression
+# A volcano plot shows log2 fold change (x-axis) vs. statistical significance (y-axis)
+
+EnhancedVolcano(
+  data,
+  title = paste0("Lung cancer vs. Healthy (", nrow(degs), " DEGs)"),
+  lab = data$GeneName,
+  x = "log2FC",
+  y = "P.Value",
+  pCutoff = pvalue.cutoff,
+  FCcutoff = log2fc.cutoff,
+  labSize = 3,
+  xlim = c(-15, 15),
+  ylim = c(0, 4)
+)
+
+# The code below saves the figure in a file in our output folder
+filename <- paste0(out.folder, "volcano-plot.png")
+png(filename, width = 2000, height = 1500, res = 150)
+EnhancedVolcano(
+  data,
+  title = paste0("Lung cancer vs. Healthy (", nrow(degs), " DEGs)"),
+  lab = data$GeneName,
+  x = "log2FC",
+  y = "P.Value",
+  pCutoff = pvalue.cutoff,
+  FCcutoff = log2fc.cutoff,
+  labSize = 3,
+  xlim = c(-15, 15),
+  ylim = c(0, 4)
+)
+dev.off()
+
+```
+
+**Questions**
+
+-   **Q5**: Can you explain how you interpret the Volcano plot?
+    -   Anything below the significance line is considered not significance, and anything between the two expression lines is considered not expressed differently enough
+
+**Interpretation guide for Q5:**
+
+-   Points in the **upper corners** are significant DEGs (high \|log2FC\| and low p-value)
+-   **Gray points** don't meet cutoff criteria (either low fold change or not significant)
+-   **Horizontal line** shows the p-value cutoff
+-   **Vertical lines** show the fold change cutoff
+-   A **symmetric distribution** suggests no technical bias in the experiment
+-   **Red points** are significant and labeled with gene names
+
+------------------------------------------------------------------------
+
+## 6. Protein-Protein Interaction Network
+
+**!!! IMPORTANT: Before you run this section, make sure that you have Cytoscape open !!!**
+
+**Why build PPI networks?** Proteins rarely work alone - they interact with other proteins to carry out biological functions. By building a network of interactions among our up-regulated genes, we can:
+
+1.  Identify groups of proteins that work together (functional modules)
+2.  Find "hub" proteins that interact with many others (often key regulators)
+3.  Understand the biological context of our gene expression changes
+
+In this section, we construct a protein-protein interaction (PPI) network to explore the interactions between up-regulated genes associated with lung cancer. Using Cytoscape with the stringApp, we query the STRING database to create a network based on known and predicted interactions. This network allows us to identify clusters of proteins that may work together in lung cancer pathology.
+
+```{r}
+
+# Make sure Cytoscape is running!
+cytoscapePing()
+
+cat("Successfully connected to Cytoscape!\n")
+
+# Check if stringApp is installed, if not, install it
+status <- RCy3::getAppStatus("stringApp")
+if (!grepl("status: Installed", status)) {
+  cat("Installing stringApp...\n")
+  RCy3::installApp("stringApp")
+}
+
+cat("Building PPI network with", nrow(degs), "up-regulated genes\n")
+cat("Note: Networks with >500 genes may be slow to visualize and analyze\n")
+
+if(nrow(degs) > 1000) {
+  cat("WARNING: Your gene list is very large. Consider using stricter cutoffs.\n")
+}
+
+# Query STRING database for interactions among up-regulated genes
+# cutoff=0.4 means we only include interactions with confidence score > 0.4
+query <- readr::format_csv(
+  as.data.frame(degs$GeneID),
+  col_names = FALSE,
+  quote_escape = "double",
+  eol = ","
+)
+
+RCy3::commandsPOST(
+  paste0('string protein query cutoff=0.0 newNetName="Lung Cancer up-regulated PPI" query="',
+    query,'" limit=0'))
+
+# Select the largest connected component
+RCy3::commandsRun(paste0('network select subnetwork createSubnetwork=TRUE'))
+
+cat("\nNetwork created successfully!\n")
+
+# Let's export an image of the network in the output folder
+RCy3::exportImage(
+  filename = paste0(out.folder, "PPI-network-up.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+ppi.net.suid <- RCy3::getNetworkSuid()
+
+cat("Network image saved to:", paste0(out.folder, "PPI-network-up.png\n"))
+
+```
+
+**Questions**
+
+-   **Q6**: Have a look at the network in Cytoscape: How does the network look like? How many nodes and edges are in the network?
+    -   Hint: Look at the bottom of the Cytoscape window for network statistics
+
+------------------------------------------------------------------------
+
+## 7. Network Properties - Degree Analysis
+
+**Understanding network topology:** The structure of a network reveals important information about how the system functions. Key concepts include:
+
+-   **Degree**: Number of connections a node has (proteins with high degree are "hubs")
+-   **Scale-free networks**: Most nodes have few connections, few nodes have many connections (common in biological networks)
+-   **Betweenness centrality**: Measures how often a node lies on shortest paths between other nodes (important for information flow)
+-   **Clustering coefficient**: Measures how interconnected a node's neighbors are (indicates functional modules)
+
+In this section, we analyze the topological properties of our PPI network. The degree of a node represents the number of interactions it has with other nodes, providing insight into which proteins serve as hubs and may play central roles in network connectivity and functionality.
+
+```{r}
+# Calculate network properties
+RCy3::analyzeNetwork()
+
+# Get network statistics for all nodes
+network.stats <- RCy3::getTableColumns(columns = c(
+  "display name", "Degree", "BetweennessCentrality", 
+  "ClusteringCoefficient"
+))
+
+# Summary statistics
+cat("Network Statistics:\n")
+cat("==================\n")
+cat("Number of nodes:", nrow(network.stats), "\n")
+cat("Average degree:", round(mean(network.stats$Degree), 2), "\n")
+cat("Max degree:", max(network.stats$Degree), "\n")
+cat("Average betweenness:", round(mean(network.stats$BetweennessCentrality), 2), "\n")
+cat("Average clustering coefficient:", round(mean(network.stats$ClusteringCoefficient), 3), "\n\n")
+
+# Find hub genes (top 10 by degree)
+cat("Top 10 hub genes (by degree):\n")
+hubs <- network.stats[order(-network.stats$Degree), ][1:10, c("display name", "Degree")]
+print(hubs)
+
+# Let's have a look at the degree distribution
+hist(network.stats$Degree, 
+     breaks = 50,
+     main = "Degree Distribution",
+     xlab = "Degree",
+     ylab = "Number of nodes",
+     col = "lightblue")
+
+# Save the histogram
+png(paste0(out.folder, "degree-distribution.png"), width = 1200, height = 900, res = 150)
+hist(network.stats$Degree, 
+     breaks = 50,
+     main = "Degree Distribution",
+     xlab = "Degree",
+     ylab = "Number of nodes",
+     col = "lightblue")
+dev.off()
+
+# Let's change the node color based on the degree
+# Higher degree = darker blue color
+style <- RCy3::getCurrentStyle()
+max.degree <- max(network.stats$Degree)
+data.values <- c(0, max.degree)
+node.colors <- c("#FBE723", "#21918C")  # Yellow to teal gradient
+
+RCy3::setNodeColorMapping(
+  table.column = "Degree",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  style.name = style
+)
+
+# Let's export an image of the network colored by degree
+RCy3::exportImage(
+  filename = paste0(out.folder, "PPI-network-up-degree.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+cat("\nDegree visualization saved!\n")
+```
+
+**Questions**
+
+-   **Q7**: Does the network have any hub nodes (genes with many connections)? Where are they located in the network?
+    -   Yes. CDK1, which is located at the center of the network.
+-   **Q8**: Does the degree distribution look like expected? Is it a scale-free network?
+    -   Yes
+        -   Hint: Scale-free networks have many low-degree nodes and few high-degree nodes (right-skewed distribution)
+
+------------------------------------------------------------------------
+
+## EXERCISE 2: Visualizing Betweenness Centrality and Clustering Coefficient
+
+Your task is to create visualizations for two additional network properties: betweenness centrality and clustering coefficient. Follow the pattern used for degree analysis above.
+
+**For each metric you should:** 1. Create a histogram showing the distribution 2. Save the histogram as a PNG file 3. Apply color mapping to the network in Cytoscape 4. Export the colored network as a PNG file
+
+**Hints:** - Column names in network.stats: "BetweennessCentrality", "ClusteringCoefficient" - Clustering coefficient ranges from 0 to 1 (use this for data.values) - Betweenness can be very large - use max(network.stats\$BetweennessCentrality) for range - Choose appropriate color schemes (see examples above)
+
+```{r}
+# EXERCISE 2A: Betweenness Centrality Visualization
+# ====================================================
+cat("\n--- Betweenness Centrality Visualization ---\n")
+
+hist(network.stats$BetweennessCentrality, 
+     breaks = 50,
+     main = "Betweenness Distribution",
+     xlab = "Betweenness",
+     ylab = "Number of nodes",
+     col = "lightblue")
+
+
+png(paste0(out.folder, "betweenness-distribution.png"), width = 1200, height = 900, res = 150)
+hist(network.stats$BetweennessCentrality, 
+     breaks = 50,
+     main = "Betweenness Distribution",
+     xlab = "Betweenness",
+     ylab = "Number of nodes",
+     col = "lightblue")
+dev.off()
+
+max.betweenness <- max(network.stats$BetweennessCentrality)
+data.values <- c(0, max.betweenness)
+node.colors <- c("#FFFFFF", "#8B0000")
+RCy3::setNodeColorMapping(
+  table.column = "BetweennessCentrality",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  style.name = style
+)
+
+# TODO: Export network image
+RCy3::exportImage(filename = paste0(out.folder, "PPI-network-up-between.png"),
+  type = "PNG",
+  zoom = 500)
+
+cat("Betweenness visualization saved!\n")
+```
+
+```{r}
+# EXERCISE 2B: Clustering Coefficient Visualization
+# ==================================================
+cat("\n--- Clustering Coefficient Visualization ---\n")
+
+hist(network.stats$ClusteringCoefficient, 
+     breaks = 50,
+     main = "Clustering Coefficient Distribution",
+     xlab = "Clustering Coefficient",
+     ylab = "Number of nodes",
+     col = "lightblue")
+
+png(paste0(out.folder, "clustering-distribution.png"), width = 1200, height = 900, res = 150)
+hist(network.stats$ClusteringCoefficient, 
+     breaks = 50,
+     main = "Clustering Coefficient Distribution",
+     xlab = "Clustering Coefficient",
+     ylab = "Number of nodes",
+     col = "lightblue")
+dev.off()
+
+# TODO: Apply color mapping in Cytoscape
+# Hint: Clustering coefficient ranges from 0 to 1
+# Hint: Use yellow to purple color scheme: c("#FBE723", "#440154")
+data.values <- c(0, 1)
+node.colors <- c("#FBE723", "#440154")
+RCy3::setNodeColorMapping(table.column = "ClusteringCoefficient",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  style.name = style)
+
+# TODO: Export network image
+ RCy3::exportImage(filename = paste0(out.folder, "PPI-network-up-clustering.png"),
+  type = "PNG",
+  zoom = 500)
+
+cat("Clustering coefficient visualization saved!\n")
+```
+
+**Questions for Exercise 2:**
+
+-   **Q9**: What do nodes with high betweenness centrality represent? Why are they important?
+    -   They represent bottleneck nodes.
+-   **Q10**: What does a high clustering coefficient tell you about a node and its neighbors?
+    -   Tells you that many of its neighbours are very well connected between each other, which means that there is redundancy.
+-   **Q11**: How do these three metrics (degree, betweenness, clustering) relate to each other?
+    -   A higher degree could also mean higher clustering.
+    -   A higher betweenness could mean lower clustering and lower degree.
+
+**Interpretation hints:** - High betweenness = "bridge" proteins connecting different parts of the network - High clustering = protein is part of a tightly connected module - High degree ≠ high betweenness (hubs aren't always bridges!)
+
+------------------------------------------------------------------------
+
+## 8. Pathway Enrichment Analysis
+
+**Why pathway enrichment now?** Now that we've visualized our network and analyzed its structure, we want to understand the **biological meaning** of these up-regulated, interacting proteins. Pathway enrichment analysis asks: "Are certain biological pathways over-represented in my gene list compared to what we'd expect by chance?"
+
+**What is enrichment?** If you have 100 up-regulated genes, and 20 of them are involved in "Cell Cycle", that's probably not random - it suggests cell cycle dysregulation is important in lung cancer. Enrichment analysis tests this statistically across all known pathways.
+
+**The enrichment workflow:** 1. Get a list of genes (our up-regulated network genes) 2. Convert gene IDs to ENTREZ format (required by enrichment tools) 3. Test which pathways are statistically over-represented 4. Interpret the biological meaning
+
+Let's perform enrichment analysis on all our up-regulated genes in the network:
+
+```{r}
+# Get all gene IDs from our PPI network
+RCy3::setCurrentNetwork(ppi.net.suid)
+all.network.genes <- RCy3::getTableColumns(columns = "query term")
+
+cat("Total genes in network:", length(all.network.genes$`query term`), "\n")
+
+# Step 1: Convert ENSEMBL IDs to ENTREZ IDs (required for enrichment analysis)
+# Some genes may not have ENTREZ IDs and will be lost
+network.entrez <- clusterProfiler::bitr(
+  all.network.genes$`query term`, 
+  fromType = "ENTREZID",
+  toType = "ENSEMBL",
+  OrgDb = org.Hs.eg.db
+)
+
+cat("Genes with ENTREZ IDs:", nrow(network.entrez), "out of", length(all.network.genes$`query term`), "\n")
+
+# Step 2: Perform WikiPathways enrichment
+# This tests which pathways are over-represented in our network genes
+cat("\nPerforming pathway enrichment analysis...\n")
+
+enrichment.network <- clusterProfiler::enrichWP(
+  gene = network.entrez$ENTREZID,
+  organism = "Homo sapiens",
+  pAdjustMethod = "fdr",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.1
+)
+
+# Step 3: Convert to data frame for easier viewing
+enrichment.res.network <- as.data.frame(enrichment.network)
+
+cat("Enriched pathways found:", nrow(enrichment.res.network), "\n")
+
+# Step 4: Save results to file
+write.table(
+  enrichment.res.network,
+  file = paste0(out.folder, "network-pathway-enrichment.tsv"),
+  row.names = FALSE,
+  sep = "\t",
+  quote = FALSE
+)
+
+# Show top 15 enriched pathways
+if(nrow(enrichment.res.network) > 0) {
+  cat("\nTop 15 enriched pathways in the PPI network:\n")
+  print(enrichment.res.network[1:min(15, nrow(enrichment.res.network)), 
+                                c("Description", "pvalue", "Count", "GeneRatio")])
+} else {
+  cat("No significantly enriched pathways found.\n")
+}
+```
+
+**Questions**
+
+-   **Q12**: What are the top enriched pathways? Do they make biological sense for lung cancer?
+    -   WP2361 (Gastric cancer), WP2446 (Retinoblastoma), WP179 (Cell cycle), WP4240 (Cell cycle-adjacent), WP4016 (DNA damage and ATR cell response).
+    -   Yes they make sense
+-   **Q13**: Look at the enrichment results table. What do these columns mean?
+    -   Gene ratio: How many of the genes in the pathway are present as a ratio of the genes that are enriched in our dataset.
+    -   BG ratio: ?
+    -   Rich factor: Enrichment factor that gives the quality of the enrichment
+    -   Fold enrichment: The log2fc change of enrichment
+-   **Q14**: Do you recognize any of these pathways from cancer biology? Are there any surprises?
+    -   Yes, no
+
+------------------------------------------------------------------------
+
+## 9. Network Clustering (optional if network is large)
+
+**Why cluster the network?** We've seen that our up-regulated genes form a large network and are enriched for certain pathways. But do **all parts of the network** do the same thing, or are there distinct functional modules? Clustering helps us find groups of densely connected proteins that likely work together in specific processes.
+
+**What to expect:** Different clusters might represent: - Different aspects of the same pathway (e.g., different cell cycle phases) - Completely different pathways (e.g., metabolism vs. proliferation) - Protein complexes that physically interact
+
+Let's use the GLay clustering algorithm to identify these modules:
+
+```{r}
+RCy3::setCurrentNetwork(ppi.net.suid)
+
+# Check if clusterMaker2 is installed
+status <- RCy3::getAppStatus("clusterMaker2")
+if (!grepl("status: Installed", status)) {
+  cat("Installing clusterMaker2...\n")
+  RCy3::installApp("clusterMaker2")
+}
+
+# Run GLay clustering algorithm
+cat("Running GLay clustering algorithm...\n")
+RCy3::commandsRun('cluster glay network=current')
+
+# Get cluster assignments
+cluster.data <- RCy3::getTableColumns(columns = c("name", "__glayCluster"))
+num.clusters <- length(unique(cluster.data$`__glayCluster`))
+
+cat("\nNumber of clusters found:", num.clusters, "\n")
+
+# Show cluster sizes
+cluster.sizes <- table(cluster.data$`__glayCluster`)
+cat("\nCluster sizes:\n")
+print(sort(cluster.sizes, decreasing = TRUE))
+
+# Apply colors to clusters
+# Use a color palette with enough colors for all clusters
+if(num.clusters <= 7) {
+  colors.cluster <- brewer.pal(max(3, num.clusters), "BrBG")
+} else {
+  # For more than 7 clusters, use a different palette
+  colors.cluster <- colorRampPalette(brewer.pal(11, "Spectral"))(num.clusters)
+}
+
+data.values <- 1:num.clusters
+
+style <- RCy3::getCurrentStyle()
+RCy3::setNodeColorMapping(
+  table.column = "__glayCluster",
+  table.column.values = data.values,
+  colors = colors.cluster,
+  mapping.type = "d",
+  style.name = style
+)
+
+# Export the network as a PNG image to the output folder
+RCy3::exportImage(
+  filename = paste0(out.folder, "PPI-network-up-clusters.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+cat("\nClustered network saved to:", paste0(out.folder, "PPI-network-up-clusters.png\n"))
+
+```
+
+**Questions**
+
+-   **Q15**: How many clusters did you find? Look at the network in Cytoscape - can you see the distinct colored groups?
+
+    -   83\. Yes you can see distinct groups.
+
+-   **Q16**: Which cluster is the largest? Are the clusters similar in size or is there one dominant cluster?
+
+    -   There is one large cluster, size 74. There are some others with a similar size, but this one dominates.
+
+-   **Q17**: Looking at the network visualization with clusters colored:
+
+------------------------------------------------------------------------
+
+## 10. Pathway Enrichment on Individual Clusters (Optional)
+
+**Going deeper:** We now know the **overall** biological function of our network (from section 8). But do different clusters represent different biological functions? Or do they all contribute to the same pathways?
+
+This section is **optional** but highly recommended if you have time! It will show you whether your clusters have distinct biological roles.
+
+**Example: Analyzing one cluster**
+
+Let's look at one cluster in detail:
+
+```{r}
+# Choose a cluster to analyze (cluster 1 is typically the largest)
+cluster <- 3
+
+cat("Analyzing cluster", cluster, "in detail\n")
+
+RCy3::setCurrentNetwork(ppi.net.suid)
+style <- RCy3::getCurrentStyle()
+
+# Select nodes in the cluster and create a subnetwork
+cluster.genes <- RCy3::selectNodes(cluster, by.col = "__glayCluster")
+
+if(length(cluster.genes$nodes) == 0) {
+  stop("No genes found in cluster ", cluster, ". Try a different cluster number.")
+}
+
+cat("Genes in cluster:", length(cluster.genes$nodes), "\n")
+
+# Create subnetwork for this cluster
+RCy3::createSubnetwork(cluster.genes$nodes, subnetwork.name = paste0("cluster_", cluster))
+
+# Layout the subnetwork nicely
+RCy3::layoutNetwork()
+RCy3::scaleLayout(axis = "Both", scaleFactor = 3)
+
+# Load expression data and color by log2FC
+RCy3::loadTableData(data, data.key.column = "GeneID", table.key.column = "query term")
+
+# Apply color mapping (red = up, blue = down)
+max.fc <- ceiling(max(abs(data$log2FC), na.rm = TRUE))
+data.values <- c(-max.fc, 0, max.fc)
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+
+RCy3::setNodeColorMapping(
+  table.column = "log2FC",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  style.name = style
+)
+
+# Export cluster visualization
+RCy3::exportImage(
+  filename = paste0(out.folder, "cluster-", cluster, "-network.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+cat("\nCluster network visualization saved!\n")
+
+# Now perform enrichment on this cluster
+gene.ids <- RCy3::getTableColumns(columns = "GeneID")
+
+cat("\nPerforming pathway enrichment on cluster", cluster, "...\n")
+cat("Number of genes in cluster:", length(gene.ids$GeneID), "\n")
+
+# Convert to ENTREZ IDs
+cluster.entrez <- clusterProfiler::bitr(
+  gene.ids$GeneID, 
+  fromType = "ENSEMBL",
+  toType = "ENTREZID",
+  OrgDb = org.Hs.eg.db
+)
+
+cat("Genes with ENTREZ IDs:", nrow(cluster.entrez), "\n")
+
+# Perform enrichment
+enrichment.cluster <- clusterProfiler::enrichWP(
+  gene = cluster.entrez$ENTREZID,
+  organism = "Homo sapiens",
+  pAdjustMethod = "fdr",
+  pvalueCutoff = 0.05,
+  qvalueCutoff = 0.1
+)
+
+enrichment.res.cluster <- as.data.frame(enrichment.cluster)
+
+cat("\nEnriched pathways in cluster", cluster, ":", nrow(enrichment.res.cluster), "\n")
+
+# Save results
+write.table(
+  enrichment.res.cluster,
+  file = paste0(out.folder, "cluster-", cluster, "-pathway-enrichment.tsv"),
+  row.names = FALSE,
+  sep = "\t",
+  quote = FALSE
+)
+
+# Show results
+if(nrow(enrichment.res.cluster) > 0) {
+  cat("\nTop enriched pathways in cluster", cluster, ":\n")
+  print(enrichment.res.cluster[1:min(10, nrow(enrichment.res.cluster)), 
+                                c("Description", "pvalue", "Count")])
+} else {
+  cat("No significantly enriched pathways found in this cluster.\n")
+}
+```
+
+**Questions**
+
+-   **Q18**: What pathways are enriched in this specific cluster? Are they different from the overall network enrichment (section 8)?
+
+    -   WP5443 Effects of MFN2 mutation\
+        WP4856 Intracellular trafficking proteins involved in CMT neuropathy
+
+    -   They are different
+
+-   **Q19**: Does this cluster seem to have a specific biological function? How does this relate to the network topology you observed?
+
+    -   Yes.
+
+-   **Q20**: If you have time, try analyzing cluster 2 or 3. Do different clusters represent different biological processes?
+
+    -   They do not have significantly expressed columns
+
+------------------------------------------------------------------------
+
+## 11. Pathway Visualization (Optional - Advanced)
+
+**From enrichment to visualization:** So far, we've identified which pathways are enriched. Now let's actually **visualize** one of these pathways with our gene expression data overlaid. This shows exactly which genes in a canonical pathway are changing in lung cancer.
+
+**Why visualize pathways?** While enrichment tells you "this pathway is important", visualization shows you: - **Which specific genes** in the pathway are affected - **How strongly** they're up- or down-regulated - **Which parts** of the pathway are most disrupted - **Potential therapeutic targets** within the pathway
+
+This section demonstrates how to import a pathway from WikiPathways and overlay your expression data.
+
+```{r}
+# Make sure Cytoscape is running
+cytoscapePing()
+
+# Select a pathway ID from your enrichment results (section 8 or 10)
+# Look at the 'ID' column in enrichment.res.network or enrichment.res.cluster
+# Example: WP179 = Cell Cycle pathway
+# Replace this with a pathway that was enriched in YOUR analysis!
+pathway.id <- "WP179"
+
+cat("Visualizing pathway:", pathway.id, "\n")
+
+# Check if WikiPathways app is installed
+status <- RCy3::getAppStatus("wikipathways")
+if (!grepl("status: Installed", status)) {
+  cat("Installing WikiPathways app...\n")
+  RCy3::installApp("wikipathways")
+}
+
+# Import the pathway into Cytoscape as a pathway (preserves original layout)
+RCy3::commandsRun(paste0('wikipathways import-as-pathway id=', pathway.id))
+RCy3::toggleGraphicsDetails()
+
+# Load gene expression data onto the pathway
+RCy3::loadTableData(data, data.key.column = "GeneID", table.key.column = "Ensembl")
+
+# Apply color mapping (red = up-regulated, blue = down-regulated)
+data.values <- c(-2, 0, 2)
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+
+RCy3::setNodeColorMapping(
+  table.column = "log2FC",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  style.name = "WikiPathways"
+)
+
+# Export the pathway visualization
+RCy3::exportImage(
+  filename = paste0(out.folder, pathway.id, "-pathway-visualization.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+cat("\nPathway visualization saved!\n")
+cat("Look at the pathway in Cytoscape to see which genes are up/down-regulated\n")
+```
+
+**Questions**
+
+-   **Q21**: Look at the pathway visualization in Cytoscape. Are specific parts of the pathway more affected than others?
+
+    -   CCNs are quite affected
+
+-   **Q22**: Can you identify any potential therapeutic targets (highly up-regulated genes in critical pathway positions)?
+
+    -   CDKN2A
+
+    -   ESPL1
+
+-   **Q23**: Does the visualization help you understand why this pathway was enriched? Does it tell a biological story?
+
+    -   Yes, yes.
+
+------------------------------------------------------------------------
+
+## 12. Drug Target Extension (Optional - Very Advanced)
+
+**Finding therapeutic opportunities:** Now that we've identified a dysregulated pathway, we can extend it with known drug-target interactions. This helps identify: - **Existing drugs** that target genes in this pathway - **Potential repurposing opportunities** for cancer treatment - **Mechanistic understanding** of how drugs might work
+
+This section uses the **CyTargetLinker** app to add drug information to our pathway network.
+
+**Note:** This section requires downloading drug-target databases. For this practical, we'll use a simplified approach. For your own projects, you can download complete databases from the [CyTargetLinker website](https://projects.bigcat.unimaas.nl/cytargetlinker/linksets/).
+
+```{r}
+# Make sure Cytoscape is running
+cytoscapePing()
+
+# Check if CyTargetLinker is installed
+status <- RCy3::getAppStatus("CyTargetLinker")
+if (!grepl("status: Installed", status)) {
+  cat("Installing CyTargetLinker app...\n")
+  cat("This may take a minute...\n")
+  RCy3::installApp("CyTargetLinker")
+}
+
+# Import pathway as a NETWORK (not as pathway) - this allows extension
+# Using the same pathway as section 11
+pathway.id <- "WP179"
+
+cat("Importing pathway as network for drug extension:", pathway.id, "\n")
+
+RCy3::commandsRun(paste0('wikipathways import-as-network id=', pathway.id))
+
+# Load expression data
+RCy3::loadTableData(data, data.key.column = "GeneID", table.key.column = "Ensembl")
+
+# Apply color mapping
+data.values <- c(-2, 0, 2)
+node.colors <- c(rev(brewer.pal(length(data.values), "RdBu")))
+
+RCy3::setNodeColorMapping(
+  table.column = "log2FC",
+  table.column.values = data.values,
+  colors = node.colors,
+  mapping.type = "c",
+  default.color = "#FFFFFF",
+  style.name = "WikiPathways-As-Network"
+)
+
+cat("\nPathway imported as network.\n")
+cat("\n=== IMPORTANT ===\n")
+cat("To extend this network with drug-target interactions:\n")
+cat("1. Download drug-target linksets from: https://projects.bigcat.unimaas.nl/cytargetlinker/linksets/\n")
+cat("2. Look for 'drugbank' linkset for Homo sapiens\n")
+cat("3. Extract the .xgmml file to a known location\n")
+cat("4. In Cytoscape: Apps → CyTargetLinker → Extend network\n")
+cat("5. Select 'Ensembl' as the ID attribute\n")
+cat("6. Browse to your drugbank .xgmml file\n")
+cat("7. Click OK\n")
+cat("\nAlternatively, if you have the drugbank file, uncomment and run the code below:\n")
+```
+
+```{r}
+
+unzip(system.file("extdata","drugbank-5.1.0.xgmml.zip", package="rWikiPathways"), exdir = getwd())
+drugbank.file <- file.path(getwd(), "drugbank-5.1.0.xgmml")
+
+# Extend network with drug-target interactions
+RCy3::commandsRun(paste0('cytargetlinker extend idAttribute="Ensembl" linkSetFiles="', drugbank.file, '"'))
+
+# Apply automatic layout
+RCy3::commandsRun('cytargetlinker applyLayout network="current"')
+
+# Style drug nodes for better visibility
+drug.nodes <- RCy3::selectNodes("drug", by.col = "CTL.Type", preserve = FALSE)$nodes
+RCy3::clearSelection()
+RCy3::setNodeColorBypass(drug.nodes, "#DD99FF")  # Purple color
+RCy3::setNodeShapeBypass(drug.nodes, "hexagon")   # Hexagon shape
+
+# Get drug labels and make them more visible
+drug.data <- RCy3::getTableColumns(columns = c("SUID", "CTL.label"))
+drug.labels <- drug.data[!is.na(drug.data$CTL.label), ]
+if(nrow(drug.labels) > 0) {
+  RCy3::setNodeLabelBypass(drug.labels$SUID, drug.labels$CTL.label)
+}
+
+# Export the extended network
+RCy3::exportImage(
+  filename = paste0(out.folder, pathway.id, "-with-drugs.png"),
+  type = "PNG",
+  zoom = 500
+)
+
+cat("\nDrug-extended network created!\n")
+cat("Purple hexagons = drugs that target genes in this pathway\n")
+```
+
+**What to look for after extension:**
+
+1.  **Purple hexagon nodes** = approved drugs
+2.  **Edges from drugs to genes** = known drug-target interactions
+3.  **Drugs connected to red nodes** = drugs that target up-regulated genes (might suppress them)
+4.  **Drugs connected to blue nodes** = drugs that target down-regulated genes
+
+**Questions (if you complete the drug extension):**
+
+-   **Q24**: How many drugs were added to your pathway network?
+
+    -   33
+
+-   **Q25**: Are there drugs that target multiple genes in the pathway? (These might be particularly effective)
+
+    -   Yes
+
+-   **Q26**: Do any of the drugs target key hub genes you identified earlier in the practical?
+
+    -   Yes
+
+-   **Q27**: Can you identify any drugs that might be candidates for repurposing in lung cancer treatment?
+
+    -   Yes
+
+------------------------------------------------------------------------
+
+## 13. Session Information
+
+```{r}
+# Record session information for reproducibility
+sessionInfo()
+```
+
+------------------------------------------------------------------------
+
+**End of Practical**
+
+**Key Takeaways:**
+
+1.  **Network-first approach**: Building PPI networks helps visualize functional relationships between DEGs
+2.  **Network topology matters**: Hub genes (degree), bridge genes (betweenness), and modules (clustering) play different roles
+3.  **Enrichment provides context**: Pathway enrichment interprets the biological meaning of network modules
+4.  **Visualization reveals details**: Overlaying data on pathways shows which specific genes are affected
+5.  **Drug extension enables translation**: Connecting networks to drugs identifies potential therapeutic opportunities
+
+**What makes a network analysis successful?** - Appropriate network size (50-500 nodes is ideal) - Clear functional modules identified by clustering - Distinct biological pathways enriched in different clusters - Pathway visualizations that tell a coherent biological story - Hub genes that align with known biology or suggest novel mechanisms
+
+**Next Steps for Your Project:**
+
+1.  **Build networks** for your own dataset using appropriate cutoffs
+2.  **Validate hub genes**: Check literature or databases for known roles
+3.  **Follow up interesting pathways**: Read papers on the enriched pathways in your context
+4.  **Explore drug repurposing**: Investigate whether identified drugs are used in related diseases
+
+**Additional Resources:**
+
+-   [WikiPathways](https://www.wikipathways.org/) - Browse and search pathways
+-   [STRING Database](https://string-db.org/) - Explore protein interactions
+-   [CyTargetLinker](https://cytargetlinker.github.io/) - Download drug-target databases
+-   [Cytoscape Tutorials](http://tutorials.cytoscape.org/) - Learn advanced Cytoscape features
+-   [rWikiPathways Documentation](https://bioconductor.org/packages/rWikiPathways/) - API documentation
+
+**Tips for Success:**
+
+✓ Always verify your data loaded correctly before proceeding ✓ Save your Cytoscape session frequently (File → Save Session As...) ✓ Export high-quality images for presentations (increase zoom parameter) ✓ Document parameter choices for reproducibility ✓ Compare results with literature to validate findings ✓ Focus on biological interpretation, not just statistical significance
