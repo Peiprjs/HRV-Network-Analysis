@@ -37,7 +37,7 @@ This section checks if each required package is already installed. If not, it in
 -   **rstudioapi**: Allows setting working directory to script location.
 
 ```{r}
-# Install packages only if not already installed
+# Install packages only if not already done
 if (!requireNamespace("BiocManager", quietly = TRUE)) {
   install.packages("BiocManager")
 }
@@ -136,7 +136,7 @@ We filter for genes that show significant differences in expression between canc
 # - Use P.Value < 0.05 (unadjusted) if few genes pass P.value cutoff
 # - Lower log2FC cutoff: 0.26 (20% change), 0.58 (50% change), 1 (100% change)
 
-log2fc.cutoff <- 0.58
+log2fc.cutoff <- 1
 pvalue.cutoff <- 0.05
 
 # Select DEGs using absolute value to get both up and down regulated genes
@@ -676,7 +676,7 @@ Let's look at one cluster in detail:
 
 ```{r}
 # Choose a cluster to analyze (cluster 1 is typically the largest)
-cluster <- 3
+cluster <- 1
 
 cat("Analyzing cluster", cluster, "in detail\n")
 
@@ -732,9 +732,9 @@ cat("Number of genes in cluster:", length(gene.ids$GeneID), "\n")
 
 # Convert to ENTREZ IDs
 cluster.entrez <- clusterProfiler::bitr(
-  gene.ids$GeneID, 
-  fromType = "ENSEMBL",
-  toType = "ENTREZID",
+  all.network.genes$`query term`, 
+  fromType = "ENTREZID",
+  toType = "ENSEMBL",
   OrgDb = org.Hs.eg.db
 )
 
@@ -807,7 +807,7 @@ cytoscapePing()
 # Look at the 'ID' column in enrichment.res.network or enrichment.res.cluster
 # Example: WP179 = Cell Cycle pathway
 # Replace this with a pathway that was enriched in YOUR analysis!
-pathway.id <- "WP179"
+pathway.id <- "WP4868"
 
 cat("Visualizing pathway:", pathway.id, "\n")
 
@@ -888,7 +888,7 @@ if (!grepl("status: Installed", status)) {
 
 # Import pathway as a NETWORK (not as pathway) - this allows extension
 # Using the same pathway as section 11
-pathway.id <- "WP179"
+pathway.id <- "WP4868"
 
 cat("Importing pathway as network for drug extension:", pathway.id, "\n")
 
