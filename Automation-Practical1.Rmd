@@ -86,7 +86,7 @@ if(!dir.exists(out.folder)) {
 In this section, we load a gene expression lung cancer dataset from the TCGA project (The Cancer Genome Atlas). This dataset contains the differential gene expression result comparing lung cancer vs. healthy tissue. The dataset is loaded from an Excel file with 5 columns. This dataset will be used throughout the practical.
 
 ```{r}
-# Load the lung cancer dataset from an Excel file
+# Load the lung cancer dataset from an Excel file :3
 # No need to define the whole file path if you set the working directory
 data <- read_excel("HRV-data.xlsx")
 
