@@ -417,6 +417,9 @@ Your task is to create visualizations for two additional network properties: bet
 # ====================================================
 cat("\n--- Betweenness Centrality Visualization ---\n")
 
+RCy3::analyzeNetwork()
+
+
 hist(network.stats$BetweennessCentrality, 
      breaks = 50,
      main = "Betweenness Distribution",
@@ -437,6 +440,7 @@ dev.off()
 max.betweenness <- max(network.stats$BetweennessCentrality)
 data.values <- c(0, max.betweenness)
 node.colors <- c("#FFFFFF", "#8B0000")
+
 RCy3::setNodeColorMapping(
   table.column = "BetweennessCentrality",
   table.column.values = data.values,
@@ -456,6 +460,8 @@ cat("Betweenness visualization saved!\n")
 ```{r}
 # EXERCISE 2B: Clustering Coefficient Visualization
 # ==================================================
+RCy3::analyzeNetwork()
+
 cat("\n--- Clustering Coefficient Visualization ---\n")
 
 hist(network.stats$ClusteringCoefficient, 
@@ -676,7 +682,7 @@ Let's look at one cluster in detail:
 
 ```{r}
 # Choose a cluster to analyze (cluster 1 is typically the largest)
-cluster <- 1
+cluster <- 3
 
 cat("Analyzing cluster", cluster, "in detail\n")
 
